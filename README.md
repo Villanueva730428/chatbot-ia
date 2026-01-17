@@ -42,9 +42,6 @@ Este proyecto se construye por fases (ver guía en agents.md):
 - FASE 5: pruebas documentadas (3 escenarios + capturas)
 - FASE 6: optimización y coste (estrategias para reducir tokens)
 - FASE 7: entrega (README final + informe)
-
-Actualmente el repo implementa hasta **FASE 4**.
-
 ---
 
 ## Requisitos

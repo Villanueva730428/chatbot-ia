@@ -1,0 +1,33 @@
+# Python caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# VS Code
+.vscode/
+
+# Environment files (secrets)
+.env
+.env.*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Office temporary files
+~$*.docx
+
+# Build / packaging
+build/
+dist/
+*.egg-info/
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/

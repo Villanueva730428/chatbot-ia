@@ -22,13 +22,16 @@ Opción 3 (recomendado): archivo .env
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import os
 import sys
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
 
 import openai
 from openai import AzureOpenAI
 from dotenv import load_dotenv
+
+from colorama import Fore, Style, init as colorama_init
 
 
 REQUIRED_ENV_VARS = (
@@ -55,7 +58,81 @@ SYSTEM_PROMPT = (
 )
 
 
-def load_configuration() -> Dict[str, str]:
+SHOW_TOKEN_USAGE = True
+
+
+@dataclass(frozen=True)
+class TokenUsage:
+    """Uso de tokens reportado por la API."""
+
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+
+
+@dataclass(frozen=True)
+class AssistantReply:
+    """Respuesta del asistente más metadatos relevantes."""
+
+    content: str
+    token_usage: Optional[TokenUsage]
+
+
+class TokenTracker:
+    """Acumula tokens por sesión para mostrar métricas básicas."""
+
+    def __init__(self) -> None:
+        self.prompt_tokens_total = 0
+        self.completion_tokens_total = 0
+        self.total_tokens_total = 0
+
+    def update(self, token_usage: Optional[TokenUsage]) -> None:
+        """Suma el uso reportado por el modelo (si existe)."""
+
+        if token_usage is None:
+            return
+
+        self.prompt_tokens_total += int(token_usage.prompt_tokens)
+        self.completion_tokens_total += int(token_usage.completion_tokens)
+        self.total_tokens_total += int(token_usage.total_tokens)
+
+    def format_summary(self) -> str:
+        """Devuelve un resumen de tokens acumulados."""
+
+        return (
+            f"prompt={self.prompt_tokens_total}, "
+            f"completion={self.completion_tokens_total}, "
+            f"total={self.total_tokens_total}"
+        )
+
+
+def _extract_token_usage(response: Any) -> Optional[TokenUsage]:
+    """Extrae usage de la respuesta del SDK (si viene disponible)."""
+
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return None
+
+    prompt_tokens = getattr(usage, "prompt_tokens", None)
+    completion_tokens = getattr(usage, "completion_tokens", None)
+    total_tokens = getattr(usage, "total_tokens", None)
+
+    if prompt_tokens is None and isinstance(usage, dict):
+        prompt_tokens = usage.get("prompt_tokens")
+        completion_tokens = usage.get("completion_tokens")
+        total_tokens = usage.get("total_tokens")
+
+    if prompt_tokens is None or completion_tokens is None or total_tokens is None:
+        return None
+
+    return TokenUsage(
+        prompt_tokens=int(prompt_tokens),
+        completion_tokens=int(completion_tokens),
+        total_tokens=int(total_tokens),
+    )
+
+
+def load_configuration(*, load_dotenv_file: bool = True) -> Dict[str, str]:
     """Lee y valida la configuración desde variables de entorno.
 
     Returns:
@@ -72,7 +149,8 @@ def load_configuration() -> Dict[str, str]:
     # Carga variables desde un archivo .env local (si existe).
     # - override=False: si ya tienes variables definidas en el sistema, tienen prioridad.
     # Prueba: crea .env con las variables y ejecuta `python chatbot.py`.
-    load_dotenv(override=False)
+    if load_dotenv_file:
+        load_dotenv(override=False)
 
     configuration: Dict[str, str] = {}
     missing_variables = []
@@ -178,7 +256,7 @@ def request_assistant_reply(
     configuration: Dict[str, str],
     conversation_history: List[Dict[str, str]],
     generation_parameters: Dict[str, float | int],
-) -> str:
+) -> AssistantReply:
     """Solicita una respuesta del asistente a Azure OpenAI.
 
     - Incluye siempre el rol system.
@@ -203,7 +281,21 @@ def request_assistant_reply(
     if not content:
         raise ValueError("Respuesta vacía del modelo.")
 
-    return content
+    return AssistantReply(content=content, token_usage=_extract_token_usage(response))
+
+
+def format_token_usage_line(token_usage: Optional[TokenUsage]) -> str:
+    """Formatea el uso de tokens de un turno (si está disponible)."""
+
+    if token_usage is None:
+        return "Tokens: (no disponible)"
+
+    return (
+        "Tokens: "
+        f"prompt={token_usage.prompt_tokens}, "
+        f"completion={token_usage.completion_tokens}, "
+        f"total={token_usage.total_tokens}"
+    )
 
 
 def run_chat_loop() -> None:
@@ -214,13 +306,27 @@ def run_chat_loop() -> None:
         - Escribe 'salir' y verifica que termina limpiamente.
     """
 
+    colorama_init(autoreset=True)
+
     configuration = load_configuration()
     client = create_azure_openai_client(configuration)
     generation_parameters = load_generation_parameters()
 
     conversation_history: List[Dict[str, str]] = []
+    token_tracker = TokenTracker()
 
-    print("Chat iniciado. Escribe tu mensaje (o 'salir' para terminar).")
+    print(Fore.CYAN + "Azure OpenAI Chatbot" + Style.RESET_ALL)
+    print(
+        "Escribe tu mensaje y presiona Enter. Para terminar: 'salir'. "
+        "(Ctrl+C también funciona)"
+    )
+    print(
+        f"Deployment: {configuration['azure_openai_deployment_name']} | "
+        f"temperature={generation_parameters['temperature']} | "
+        f"max_tokens={generation_parameters['max_tokens']} | "
+        f"top_p={generation_parameters['top_p']}"
+    )
+    print("-" * 72)
 
     while True:
         try:
@@ -253,8 +359,17 @@ def run_chat_loop() -> None:
             )
             continue
 
-        conversation_history.append({"role": "assistant", "content": assistant_reply})
-        print("Asistente:", assistant_reply)
+        conversation_history.append({"role": "assistant", "content": assistant_reply.content})
+        print(Fore.GREEN + "Asistente:" + Style.RESET_ALL, assistant_reply.content)
+
+        if SHOW_TOKEN_USAGE:
+            token_tracker.update(assistant_reply.token_usage)
+            print(Fore.MAGENTA + format_token_usage_line(assistant_reply.token_usage) + Style.RESET_ALL)
+
+        print("-" * 72)
+
+    if SHOW_TOKEN_USAGE:
+        print(Fore.MAGENTA + "Resumen tokens (sesión): " + token_tracker.format_summary() + Style.RESET_ALL)
 
 
 def main() -> None:

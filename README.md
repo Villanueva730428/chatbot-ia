@@ -117,6 +117,19 @@ Uso:
 - Escribe mensajes después de `Tú:`
 - Para terminar: escribe `salir`
 
+Salida adicional:
+- El chatbot muestra una línea de **uso de tokens** por respuesta (si la API lo reporta) y un **resumen de tokens** al final de la sesión.
+
+---
+
+## Tests (pytest)
+
+Con el entorno virtual activo e instaladas las dependencias:
+
+```powershell
+pytest
+```
+
 ---
 
 ## Roles (system / user / assistant)
@@ -264,3 +277,115 @@ El costo depende del total de tokens: **tokens de entrada (prompt + historial)**
 ## Licencia
 
 Uso académico (Actividad 2). Ajusta esta sección si tu institución lo requiere.
+
+---
+
+## Mejoras solicitadas 12 febrero 2026
+
+Esta sección documenta las mejoras aplicadas al proyecto para darle una apariencia más profesional al chatbot, sumar un extra de **tracking de tokens** y agregar una base de **tests automatizados**, sin cambiar el objetivo principal del ejercicio (chat de consola con Azure OpenAI).
+
+### 1) Apariencia más profesional en consola
+
+Se mejoró la experiencia de uso en la terminal (CLI) para que sea más clara y “presentable” durante una demostración:
+
+- **Encabezado** con nombre del proyecto y guía de uso (cómo salir con `salir` o `Ctrl+C`).
+- Impresión de **parámetros activos** (deployment y valores de `temperature`, `max_tokens`, `top_p`) al iniciar.
+- Separadores visuales entre turnos para que se entienda mejor el flujo.
+- Etiquetas de salida con color (por ejemplo `Asistente:`) usando `colorama` (ya estaba en dependencias).
+
+Objetivo: que las evidencias/capturas de funcionamiento en consola se vean ordenadas y consistentes.
+
+Evidencias (capturas):
+
+![Mejora del chatbot](docs/Evidencia-Funcionamiento/Mejora%20del%20chatbot.jpg)
+
+![Mejora del chatbot 2](docs/Evidencia-Funcionamiento/Mejora%20del%20chatbot%202.jpg)
+
+### 2) Tracking de tokens (por turno y acumulado)
+
+Se agregó un “extra” para observar consumo de tokens durante la sesión:
+
+- Por cada respuesta, el chatbot intenta leer `response.usage` (si la API lo incluye) y muestra una línea:
+   - `prompt`, `completion` y `total`.
+- Al finalizar la sesión, muestra un **resumen acumulado** de tokens de toda la conversación.
+
+Notas importantes:
+
+- Si la API/SDK no devuelve el campo `usage`, el chatbot muestra “Tokens: (no disponible)” (esto evita fallos y mantiene el flujo).
+- No se imprimen secretos: el tracking solo muestra métricas (tokens), nunca la API key.
+
+### 3) Refactor mínimo para soportar métricas y pruebas
+
+Para mantener el código testeable y con responsabilidades claras, se hicieron cambios puntuales:
+
+- La función de solicitud al modelo ahora retorna un objeto con:
+   - `content` (texto del asistente)
+   - `token_usage` (si está disponible)
+- La carga de configuración (`load_configuration`) permite desactivar la carga de `.env` en tests, evitando dependencias del entorno local durante la ejecución de `pytest`.
+
+### 4) Tests automatizados (pytest)
+
+Se añadió una suite de pruebas unitarias para validar piezas clave sin llamar a Azure (no hay costos ni dependencia de red):
+
+- Normalización del input (por ejemplo `salir` con espacios/mayúsculas).
+- Validación de rangos para `temperature`, `max_tokens` y `top_p`.
+- Validación de configuración (falta de variables requeridas y normalización del endpoint).
+- Extracción y acumulación de métricas de tokens (sin usar el cliente real).
+
+Ejecución:
+
+```powershell
+pytest
+```
+
+Extracto del código de tests (pytest):
+
+Este fragmento ejemplifica cómo se valida:
+
+- Normalización de comandos de usuario (por ejemplo `salir`).
+- Rangos válidos e inválidos de parámetros (`temperature`, `max_tokens`, `top_p`).
+
+```python
+import types
+
+import pytest
+
+import chatbot
+
+
+def test_normalize_user_input_strips_and_lowercases() -> None:
+    assert chatbot.normalize_user_input("  SaLiR  ") == "salir"
+
+
+def test_validate_generation_parameters_accepts_valid() -> None:
+    chatbot.validate_generation_parameters(temperature=0.0, max_tokens=1, top_p=1.0)
+    chatbot.validate_generation_parameters(temperature=2.0, max_tokens=999, top_p=0.0)
+
+
+@pytest.mark.parametrize(
+    "temperature,max_tokens,top_p",
+    [
+        (-0.1, 10, 1.0),
+        (2.1, 10, 1.0),
+        (0.5, 0, 1.0),
+        (0.5, -1, 1.0),
+        (0.5, 10, -0.01),
+        (0.5, 10, 1.01),
+    ],
+)
+def test_validate_generation_parameters_rejects_invalid(
+    temperature: float, max_tokens: int, top_p: float
+) -> None:
+    with pytest.raises(ValueError):
+        chatbot.validate_generation_parameters(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+        )
+```
+
+### 5) Dependencias actualizadas
+
+- Se agregó `pytest` a `requirements.txt` para que correr tests sea reproducible.
+
+Resultado: el proyecto mantiene el comportamiento solicitado en el enunciado (bucle + `salir` + roles + parámetros), y además ahora cuenta con una presentación más profesional, métricas de tokens y una base de tests para evidenciar calidad.
